@@ -1,0 +1,97 @@
+from aiogram import Bot, Dispatcher, executor, types
+from aiogram.dispatcher.filters.state import StatesGroup, State
+
+from config import *
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher.filters import Text
+from aiogram.types import InlineQueryResultArticle, InputTextMessageContent, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.dispatcher import FSMContext
+
+storage = MemoryStorage()
+bot = Bot(TOKEN_API)
+dp = Dispatcher(bot=bot,
+                storage=storage)
+
+def get_kb():
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add(KeyboardButton('Начать работу'))
+
+    return kb
+
+def get_cancel():
+    return ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton('/cancel'))
+
+def get_send():
+    return ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton('/send_all'))
+
+
+class ClientStatesGroup(StatesGroup):
+
+
+    members = State()
+    desc = State()
+
+
+
+
+@dp.message_handler(commands=['start'])
+async def cmd_start(message: types.Message):
+    await message.answer('Добро пожаловать',
+                         reply_markup=get_kb())
+
+
+@dp.message_handler(commands=['cancel'], state='*')
+async def cmd_cancel(message: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state is None:
+        return
+    await message.reply('Отмена',
+                        reply_markup=get_kb())
+    await state.finish()
+
+
+
+
+@dp.message_handler(Text(equals='Начать работу', ignore_case=True), state=None)
+async def start_work(message: types.Message) -> None:
+    await ClientStatesGroup.members.set()
+    await message.answer('Сначала напишите список пользователей, которым вы хотите сделать рассылку',
+                         reply_markup=get_cancel())
+
+
+
+@dp.message_handler(state=ClientStatesGroup.members)
+async def load_photo(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        data['members'] = message.text.split(',')
+
+    await ClientStatesGroup.next()
+    await message.reply('А теперь отправьте сообщение, которое будет разослано')
+
+@dp.message_handler(state=ClientStatesGroup.desc)
+async def load_desc(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        data['desc'] = message.text
+        print(data['desc'])
+
+    await message.reply('Ваше сообщение сохранено, чтобы сделать рассылку нажмите кнопку "Начать рассылку"',
+                        reply_markup=get_send())
+
+
+@dp.message_handler(state=ClientStatesGroup.desc, commands=['send_all'])
+async def send_all(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        members = data['members']
+
+        for member in members:
+            await bot.send_message(chat_id=member,
+                                  text=data['desc'])
+
+    await message.reply('Рассылка завершена')
+
+
+    await state.finish()
+
+if __name__ == "__main__":
+    executor.start_polling(dispatcher=dp,
+                           skip_updates=True)
